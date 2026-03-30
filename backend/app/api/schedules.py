@@ -1,102 +1,71 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_manager
-from app.models.models import User, Leave, DayOffBalance
-from app.schemas.schemas import LeaveCreate, LeaveUpdate, LeaveOut
+from app.core.deps import require_manager, get_current_user
+from app.models.models import User, SchedulePeriod, Schedule
+from app.schemas.schemas import SchedulePeriodCreate, SchedulePeriodOut
+from app.services.scheduler import generate_schedule
 import uuid
 
 router = APIRouter()
 
-@router.post("/", response_model=LeaveOut, status_code=201)
-async def create_leave(
-    data: LeaveCreate,
+@router.post("/generate", response_model=SchedulePeriodOut, status_code=201)
+async def create_schedule(
+    data: SchedulePeriodCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_manager)
 ):
-    """Співробітник подає заявку на відпустку / вихідний."""
-    leave = Leave(
-        user_id=current_user.id,
+    """Генерація нового розкладу на вказаний період (тільки для менеджера)."""
+    # 1. Створюємо запис про період
+    period = SchedulePeriod(
         date_from=data.date_from,
         date_to=data.date_to,
-        type=data.type,
-        save_day_off=data.save_day_off,
-        status="pending",
+        created_by=current_user.id
     )
-    db.add(leave)
+    db.add(period)
     await db.commit()
-    await db.refresh(leave)
-    return leave
+    await db.refresh(period)
 
-@router.get("/", response_model=list[LeaveOut])
-async def get_leaves(
+    # 2. Запускаємо алгоритм генерації
+    assignments = await generate_schedule(
+        db=db,
+        date_from=data.date_from,
+        date_to=data.date_to,
+        period_id=period.id,
+        created_by=current_user.id
+    )
+
+    if not assignments:
+        raise HTTPException(status_code=400, detail="Не вдалося згенерувати розклад. Перевірте наявність співробітників.")
+
+    # 3. Зберігаємо згенеровані зміни в БД
+    schedules = [Schedule(**assign) for assign in assignments]
+    db.add_all(schedules)
+    await db.commit()
+
+    # 4. Повертаємо період разом зі змінами та користувачами (використовуємо selectinload для асинхронності)
+    result = await db.execute(
+        select(SchedulePeriod)
+        .options(
+            selectinload(SchedulePeriod.schedules).selectinload(Schedule.user)
+        )
+        .where(SchedulePeriod.id == period.id)
+    )
+    return result.scalar_one()
+
+@router.get("/", response_model=list[SchedulePeriodOut])
+async def get_periods(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Менеджер бачить всі заявки, співробітник — лише свої."""
-    if current_user.role == "manager":
-        result = await db.execute(
-            select(Leave).order_by(Leave.created_at.desc())
+    """Отримати список всіх згенерованих періодів графіку."""
+    result = await db.execute(
+        select(SchedulePeriod)
+        .options(
+            selectinload(SchedulePeriod.schedules).selectinload(Schedule.user)
         )
-    else:
-        result = await db.execute(
-            select(Leave)
-            .where(Leave.user_id == current_user.id)
-            .order_by(Leave.created_at.desc())
-        )
+        .order_by(SchedulePeriod.date_from.desc())
+    )
     return result.scalars().all()
-
-@router.patch("/{leave_id}/status", response_model=LeaveOut)
-async def update_leave_status(
-    leave_id: uuid.UUID,
-    data: LeaveUpdate,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_manager)   # тільки менеджер
-):
-    """Менеджер затверджує або відхиляє заявку."""
-    result = await db.execute(select(Leave).where(Leave.id == leave_id))
-    leave = result.scalar_one_or_none()
-    if not leave:
-        raise HTTPException(status_code=404, detail="Заявку не знайдено")
-
-    leave.status = data.status
-
-    # Якщо відпустка затверджена і людина хоче зберегти вихідний —
-    # додаємо до балансу DayOffBalance
-    if data.status == "approved" and leave.save_day_off and leave.type == "day_off":
-        year = leave.date_from.year
-        balance_result = await db.execute(
-            select(DayOffBalance).where(
-                DayOffBalance.user_id == leave.user_id,
-                DayOffBalance.year == year
-            )
-        )
-        balance = balance_result.scalar_one_or_none()
-        if not balance:
-            balance = DayOffBalance(user_id=leave.user_id, year=year)
-            db.add(balance)
-        balance.saved_days += 1
-
-    await db.commit()
-    await db.refresh(leave)
-    return leave
-
-@router.delete("/{leave_id}", status_code=204)
-async def delete_leave(
-    leave_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    result = await db.execute(select(Leave).where(Leave.id == leave_id))
-    leave = result.scalar_one_or_none()
-    if not leave:
-        raise HTTPException(status_code=404, detail="Заявку не знайдено")
-    # Видалити може лише власник (якщо pending) або менеджер
-    if current_user.role != "manager" and leave.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Немає доступу")
-    if current_user.role != "manager" and leave.status != "pending":
-        raise HTTPException(status_code=400, detail="Не можна видалити затверджену заявку")
-
-    await db.delete(leave)
-    await db.commit()
