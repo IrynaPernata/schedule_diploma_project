@@ -23,8 +23,8 @@ class LeaveStatus(str, enum.Enum):
     rejected = "rejected"
 
 class ShiftType(str, enum.Enum):
-    weekday = "weekday"   # будній день — 3 год
-    weekend = "weekend"   # вихідний — 2 особи
+    weekday = "weekday"
+    weekend = "weekend"
 
 class ScheduleStatus(str, enum.Enum):
     planned = "planned"
@@ -54,7 +54,7 @@ class Leave(Base):
     date_to: Mapped[date] = mapped_column(Date)
     type: Mapped[LeaveType] = mapped_column(Enum(LeaveType))
     status: Mapped[LeaveStatus] = mapped_column(Enum(LeaveStatus), default=LeaveStatus.pending)
-    save_day_off: Mapped[bool] = mapped_column(Boolean, default=False)  # зберегти вихідний
+    save_day_off: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     user: Mapped["User"] = relationship(back_populates="leaves")
@@ -102,6 +102,6 @@ class DayOffBalance(Base):
     year: Mapped[int] = mapped_column(Integer)
     total_days: Mapped[int] = mapped_column(Integer, default=0)
     used_days: Mapped[int] = mapped_column(Integer, default=0)
-    saved_days: Mapped[int] = mapped_column(Integer, default=0)  # перенесені вихідні
+    saved_days: Mapped[int] = mapped_column(Integer, default=0)
 
     user: Mapped["User"] = relationship(back_populates="day_off_balance")
