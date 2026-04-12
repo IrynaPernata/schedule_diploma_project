@@ -1,9 +1,11 @@
 import uuid
 from datetime import datetime, date, time
+
 from sqlalchemy import String, Boolean, Integer, Date, Time, DateTime, ForeignKey, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 import enum
+
 
 class Base(DeclarativeBase):
     pass
@@ -105,3 +107,14 @@ class DayOffBalance(Base):
     saved_days: Mapped[int] = mapped_column(Integer, default=0)
 
     user: Mapped["User"] = relationship(back_populates="day_off_balance")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))  # Хто зробив дію
+    action: Mapped[str] = mapped_column(String)  # Назва дії (напр. "Генерація", "Обмін")
+    details: Mapped[str] = mapped_column(String) # Деталі
+
+    user: Mapped["User"] = relationship()
