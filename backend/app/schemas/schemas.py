@@ -71,3 +71,49 @@ class SchedulePeriodOut(BaseModel):
 class ScheduleManualUpdate(BaseModel):
     user_id: uuid.UUID
     shift_date: date
+
+# ── Schedule ──────────────────────────────────────
+class SchedulePeriodCreate(BaseModel):
+    date_from: date
+    date_to: date
+
+class ShiftOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    shift_type: str
+    duration_hours: int
+    model_config = {"from_attributes": True}
+
+class ScheduleOut(BaseModel):
+    id: uuid.UUID
+    user_id: uuid.UUID
+    shift_date: date
+    status: str
+    outlook_synced: bool
+    user: Optional[UserOut] = None
+    shift: Optional[ShiftOut] = None
+    model_config = {"from_attributes": True}
+
+class SchedulePeriodOut(BaseModel):
+    id: uuid.UUID
+    date_from: date
+    date_to: date
+    status: str
+    created_at: datetime
+    schedules: list[ScheduleOut] = []
+    model_config = {"from_attributes": True}
+
+class SwapRequest(BaseModel):
+    schedule_id_1: uuid.UUID
+    schedule_id_2: uuid.UUID
+
+
+class AuditLogOut(BaseModel):
+    id: uuid.UUID
+    created_at: datetime
+    action: str
+    details: str
+    user: UserOut | None = None
+
+    class Config:
+        from_attributes = True
