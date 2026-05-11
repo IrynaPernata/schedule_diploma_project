@@ -87,3 +87,43 @@ async def create_outlook_ooo_event(user_email: str, start_date: str, end_date: s
 
 
 
+
+async def set_user_auto_reply(user_email: str, start_date: str, end_date: str, leave_type: str) -> bool:
+    """Налаштовує автоматичну відповідь в Outlook (Automatic Replies)."""
+    if not settings.MICROSOFT_CLIENT_ID:
+        return False
+
+    try:
+        token = await get_graph_token()
+        msg = "відпустці" if leave_type == "vacation" else "на лікарняному/відгулі"
+
+        settings_data = {
+            "automaticRepliesSetting": {
+                "status": "scheduled",
+                "externalAudience": "all",
+                "internalReplyMessage": f"<html><body>Привіт! Я перебуваю у {msg} до {end_date} і не маю доступу до пошти.</body></html>",
+                "externalReplyMessage": f"<html><body>Вітаю! Я буду поза офісом до {end_date}. З термінових питань звертайтесь до менеджера.</body></html>",
+                "scheduledStartDateTime": {
+                    "dateTime": f"{start_date}T00:00:00",
+                    "timeZone": "Europe/Kyiv"
+                },
+                "scheduledEndDateTime": {
+                    "dateTime": f"{end_date}T23:59:59",
+                    "timeZone": "Europe/Kyiv"
+                }
+            }
+        }
+
+
+        url = f"https://graph.microsoft.com/v1.0/users/{user_email}/mailboxSettings"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        async with httpx.AsyncClient() as client:
+            # Використовуємо PATCH для оновлення налаштувань
+            response = await client.patch(url, headers=headers, json=settings_data)
+            response.raise_for_status()
+            return True
+    except Exception as e:
+        logging.error(f"Помилка встановлення автовідповіді: {str(e)}")
+        return False
+

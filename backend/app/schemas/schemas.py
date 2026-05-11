@@ -3,12 +3,19 @@ from datetime import date, datetime
 from typing import Optional
 import uuid
 
-# ── Auth ──────────────────────────────────────────
+
 class UserCreate(BaseModel):
     name: str
     email: EmailStr
     password: str
     role: str = "employee"
+
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
 
 class UserOut(BaseModel):
     id: uuid.UUID
@@ -23,7 +30,7 @@ class TokenOut(BaseModel):
     token_type: str = "bearer"
     user: UserOut
 
-# ── Leaves ────────────────────────────────────────
+
 class LeaveCreate(BaseModel):
     date_from: date
     date_to: date
@@ -45,7 +52,7 @@ class LeaveOut(BaseModel):
     user: Optional[UserOut] = None
     model_config = {"from_attributes": True}
 
-# ── Schedule ──────────────────────────────────────
+
 class SchedulePeriodCreate(BaseModel):
     date_from: date
     date_to: date
@@ -72,7 +79,7 @@ class ScheduleManualUpdate(BaseModel):
     user_id: uuid.UUID
     shift_date: date
 
-# ── Schedule ──────────────────────────────────────
+
 class SchedulePeriodCreate(BaseModel):
     date_from: date
     date_to: date

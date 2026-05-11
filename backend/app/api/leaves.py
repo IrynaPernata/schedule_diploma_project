@@ -121,9 +121,41 @@ async def delete_leave(leave_id: uuid.UUID, db: AsyncSession = Depends(get_db),
         if balance and balance.used_days > 0:
             balance.used_days -= 1
 
-    # ЗАПИС В АУДИТ
+
     db.add(AuditLog(user_id=current_user.id, action="🗑️ Видалення запиту",
                     details=f"Видалено запит працівника {leave.user.name} ({leave.date_from} по {leave.date_to})"))
 
     await db.delete(leave)
     await db.commit()
+
+
+# backend/app/api/leaves.py
+
+from app.services.outlook import create_outlook_ooo_event, set_user_auto_reply  # Додаємо імпорти
+
+
+@router.patch("/{leave_id}/status", response_model=LeaveOut)
+async def update_leave_status(leave_id: uuid.UUID, data: LeaveUpdate, db: AsyncSession = Depends(get_db),
+                              current_user: User = Depends(require_manager)):
+
+
+    leave.status = data.status
+
+    if data.status == "approved":
+        # ... існуючий код балансів та хірургічної заміни ...
+
+        # 👇 НОВА ЛОГІКА: Синхронізація "Поза офісом"
+        if leave.user.email:
+            start_iso = leave.date_from.isoformat()
+            end_iso = leave.date_to.isoformat()
+
+            # 1. Створюємо подію в календарі зі статусом OOF (Out of Office)
+            await create_outlook_ooo_event(leave.user.email, start_iso, end_iso)
+
+            # 2. Вмикаємо автовідповідь на цей період
+            await set_user_auto_reply(leave.user.email, start_iso, end_iso, leave.type)
+
+        await db.commit()
+        await db.refresh(leave)
+
+    return leave
