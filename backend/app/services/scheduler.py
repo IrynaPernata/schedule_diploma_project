@@ -59,15 +59,14 @@ async def generate_schedule(db: AsyncSession, date_from: date, date_to: date, pe
                 days_since = (current_date - last_weekend_date[str(u.id)]).days
                 same_day_penalty = 1 if last_weekend_day[str(u.id)] == today_weekday else 0
 
-                # НОВА ЛОГІКА: Захист від перепрацювань.
-                # Якщо пройшло менше 18 днів (менше 3 тижнів), ставимо жорсткий блок.
+
                 too_soon_penalty = 1 if days_since < 18 else 0
 
                 return (
-                    weekend_count[str(u.id)],  # 1. Загальна кількість (порівну)
-                    too_soon_penalty,  # 2. Не ставити занадто швидко!
-                    same_day_penalty,  # 3. Бажано міняти дні (якщо дозволяє час)
-                    -days_since  # 4. Хто найдовше відпочивав
+                    weekend_count[str(u.id)],
+                    too_soon_penalty,
+                    same_day_penalty,
+                    -days_since
                 )
 
             candidates = sorted(available, key=weekend_key)

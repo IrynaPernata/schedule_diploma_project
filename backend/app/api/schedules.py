@@ -8,14 +8,14 @@ import uuid
 
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_manager
-from app.models.models import User, SchedulePeriod, Schedule, Shift, ShiftType, DayOffBalance, AuditLog
+from app.models.models import User, SchedulePeriod, Schedule, Shift, ShiftType, DayOffBalance, AuditLog, Leave
 from app.services.scheduler import generate_schedule
 from app.schemas.schemas import SchedulePeriodCreate, SchedulePeriodOut, SwapRequest, AuditLogOut  # Додано AuditLogOut
 
 router = APIRouter()
 
 
-# НОВИЙ МАРШРУТ: Отримання історії дій для Вови
+
 @router.get("/audit-logs")
 async def get_audit_logs(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_manager)):
     result = await db.execute(
@@ -28,7 +28,7 @@ async def create_schedule(db: AsyncSession = Depends(get_db), current_user: User
     date_from = date.today()
     date_to = date_from + timedelta(days=30)
 
-    # 1. Очищення старих даних та відкат балансів
+
     old_schedules_res = await db.execute(
         select(Schedule).options(selectinload(Schedule.shift)).where(Schedule.shift_date >= date_from))
     for sch in old_schedules_res.scalars().all():
@@ -43,7 +43,7 @@ async def create_schedule(db: AsyncSession = Depends(get_db), current_user: User
     await db.execute(delete(SchedulePeriod).where(SchedulePeriod.date_from >= date_from))
     await db.commit()
 
-    # 2. Генерація нового періоду
+
     period = SchedulePeriod(date_from=date_from, date_to=date_to, created_by=current_user.id)
     db.add(period)
     await db.commit()
@@ -55,13 +55,12 @@ async def create_schedule(db: AsyncSession = Depends(get_db), current_user: User
     schedules = [Schedule(**assign) for assign in assignments]
     db.add_all(schedules)
 
-    # ЗАПИС В АУДИТ
+
     db.add(AuditLog(user_id=current_user.id, action="🔄 Генерація розкладу",
                     details=f"Згенеровано новий графік з {date_from} по {date_to}"))
     await db.commit()
 
-    # 3. Нарахування балансів та СИНХРОНІЗАЦІЯ З OUTLOOK
-    from app.services.outlook import create_outlook_event  # Переконайся, що імпорт працює
+    from app.services.outlook import create_outlook_event
 
     shifts_res = await db.execute(select(Shift))
     all_shifts = {s.id: s for s in shifts_res.scalars().all()}
@@ -87,7 +86,7 @@ async def create_schedule(db: AsyncSession = Depends(get_db), current_user: User
                 local_bals[key] = bal
             local_bals[key].saved_days += 1
 
-        # 👇 ПОВЕРНУТО: Синхронізація з Outlook для кожного чергування
+
         if user and shift and shift.start_time:
             start_dt = datetime.combine(sch.shift_date, shift.start_time)
             end_dt = start_dt + timedelta(hours=shift.duration_hours)
@@ -116,27 +115,82 @@ async def get_periods(db: AsyncSession = Depends(get_db)):
     return result.scalars().all()
 
 
+# backend/app/api/schedules.py
+
 @router.get("/export/me", response_class=PlainTextResponse)
 async def export_my_schedule_ics(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
-    result = await db.execute(select(Schedule).options(selectinload(Schedule.user), selectinload(Schedule.shift)).where(
-        Schedule.user_id == current_user.id, Schedule.shift_date >= date.today()))
-    schedules = result.scalars().all()
-    ics_content = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Shift Scheduler//UA"]
+    # 1. Завантажуємо чергування працівника
+    sched_result = await db.execute(
+        select(Schedule).options(selectinload(Schedule.shift))
+        .where(Schedule.user_id == current_user.id, Schedule.shift_date >= date.today())
+    )
+    schedules = sched_result.scalars().all()
+
+    # 2. Завантажуємо затверджені відпустки та відгули працівника
+    leaves_result = await db.execute(
+        select(Leave).where(Leave.user_id == current_user.id, Leave.status == "approved", Leave.date_to >= date.today())
+    )
+    leaves = leaves_result.scalars().all()
+
+    ics_content = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Shift Scheduler//UA",
+        "METHOD:PUBLISH"
+    ]
+
+    now = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+
     for sch in schedules:
         if not sch.shift or not sch.shift.start_time: continue
         start_dt = datetime.combine(sch.shift_date, sch.shift.start_time)
         end_dt = start_dt + timedelta(hours=sch.shift.duration_hours)
-        dtstart, dtend = start_dt.strftime("%Y%m%dT%H%M%S"), end_dt.strftime("%Y%m%dT%H%M%S")
-        now = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-        ics_content.extend(["BEGIN:VEVENT", f"UID:{sch.id}@shiftscheduler.local", f"DTSTAMP:{now}",
-                            f"DTSTART;TZID=Europe/Kyiv:{dtstart}", f"DTEND;TZID=Europe/Kyiv:{dtend}",
-                            f"SUMMARY:Моє Чергування",
-                            f"DESCRIPTION:Зміна: {sch.shift.name}\\nТривалість: {sch.shift.duration_hours} год",
-                            "END:VEVENT"])
+
+        dtstart = start_dt.strftime("%Y%m%dT%H%M%S")
+        dtend = end_dt.strftime("%Y%m%dT%H%M%S")
+
+        ics_content.extend([
+            "BEGIN:VEVENT",
+            f"UID:shift-{sch.id}@shiftscheduler.local",
+            f"DTSTAMP:{now}",
+            f"DTSTART;TZID=Europe/Kyiv:{dtstart}",
+            f"DTEND;TZID=Europe/Kyiv:{dtend}",
+            f"SUMMARY:📌 Чергування: {sch.shift.name}",
+            f"DESCRIPTION:Тривалість: {sch.shift.duration_hours} год",
+            "PRIORITY:5",
+            "END:VEVENT"
+        ])
+
+
+    for l in leaves:
+
+        start_str = l.date_from.strftime("%Y%m%d")
+        end_str = (l.date_to + timedelta(days=1)).strftime("%Y%m%d")
+
+        summary = "🌴 Відпустка" if l.type == "vacation" else "🏠 Відгул"
+
+        ics_content.extend([
+            "BEGIN:VEVENT",
+            f"UID:leave-{l.id}@shiftscheduler.local",
+            f"DTSTAMP:{now}",
+            f"DTSTART;VALUE=DATE:{start_str}",
+            f"DTEND;VALUE=DATE:{end_str}",
+            f"SUMMARY:{summary}",
+            "X-MICROSOFT-CDO-BUSYSTATUS:OOF",
+            "TRANSP:TRANSPARENT",
+            "END:VEVENT"
+        ])
+
     ics_content.append("END:VCALENDAR")
-    return PlainTextResponse("\n".join(ics_content),
-                             headers={"Content-Disposition": f"attachment; filename=my_schedule.ics"},
-                             media_type="text/calendar")
+
+
+    safe_name = current_user.email.split('@')[0]
+    filename = f"schedule_{safe_name}.ics"
+    return PlainTextResponse(
+        "\n".join(ics_content),
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        media_type="text/calendar"
+    )
 
 
 @router.post("/swap", status_code=200)
@@ -166,7 +220,7 @@ async def swap_schedules(data: SwapRequest, db: AsyncSession = Depends(get_db),
     sch1.user_id = old_user_2
     sch2.user_id = old_user_1
 
-    # ЗАПИС В АУДИТ
+
     log = AuditLog(user_id=current_user.id, action="🔀 Обмін змінами",
                    details=f"Поміняно місцями: {sch1.user.name} ({sch1.shift_date}) та {sch2.user.name} ({sch2.shift_date})")
     db.add(log)

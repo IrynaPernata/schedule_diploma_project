@@ -19,3 +19,5 @@ def create_access_token(data: dict) -> str:
 
 def decode_token(token: str) -> dict:
     return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)

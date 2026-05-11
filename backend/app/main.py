@@ -1,7 +1,7 @@
 import sys
 import asyncio
 
-# Фікс для зависань бази даних на Windows
+
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 from fastapi import FastAPI
