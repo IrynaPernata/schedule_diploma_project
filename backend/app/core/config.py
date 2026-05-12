@@ -7,7 +7,9 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
 
-
+    MICROSOFT_CLIENT_ID: str = ""
+    MICROSOFT_CLIENT_SECRET: str = ""
+    MICROSOFT_TENANT_ID: str = ""
 
     class Config:
         env_file = ".env"
